@@ -620,6 +620,7 @@ class InferencePipeline:
     def embed_condition(self, condition_embedder, *args, **kwargs):
         if condition_embedder is not None:
             tokens = condition_embedder(*args, **kwargs)
+            logger.info("Condition embedder output tokens shape: {}", tokens.shape)
             return tokens, None, None
         return None, args, kwargs
 

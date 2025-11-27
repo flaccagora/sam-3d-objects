@@ -108,8 +108,13 @@ class Dino(torch.nn.Module):
         return tokens
 
     def forward(self, x, **kwargs):
+        logger.info("DINO forward called")
+        logger.info(f"Input shape: {x.shape}")
         _resized_images = self._preprocess_input(x)
+        logger.info(f"Resized and preprocessed image shape: {_resized_images.shape}")
         tokens = self._forward_last_layer(_resized_images)
+        logger.info(f"Output tokens shape: {tokens.shape}")
+        logger.info("DINO forward completed")
         return tokens.to(x.dtype)
 
     def _prune_network(self):
