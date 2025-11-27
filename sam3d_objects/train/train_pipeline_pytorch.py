@@ -537,7 +537,7 @@ class TrainPipelinePyTorch:
         )
         self._load_weights(
             slat_decoder_mesh,
-            os.path.join(self.checkpoint_dir, "slat_decoder_mesh.ckpt"),
+            os.path.join(self.checkpoint_dir, "slat_decoder_mesh.pt"),
             state_dict_key=None,
         )
 
@@ -693,6 +693,3 @@ if __name__ == "__main__":
     # Test instantiation
     pipeline = TrainPipelinePyTorch(load_pretrained=True, checkpoint_dir="checkpoints/hf")
     print("\nModels instantiated successfully!")
-
-    # Test with pretrained weights
-    # pipeline = TrainPipelinePyTorch(load_pretrained=True, checkpoint_dir="checkpoints/hf")
