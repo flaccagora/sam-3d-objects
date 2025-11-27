@@ -418,23 +418,24 @@ if __name__ == "__main__":
     # from sam3d_objects.train import TrainPipeline
 
     # Without pretrained weights (fresh initialization)
-    pipeline = TrainPipeline("checkpoints/hf/pipeline.yaml", load_pretrained=False)
+    pipeline_0 = TrainPipeline("checkpoints/hf/pipeline.yaml", load_pretrained=False)
 
     # With pretrained weights
     pipeline = TrainPipeline("checkpoints/hf/pipeline.yaml", load_pretrained=True)
 
-    # Access individual models
-    ss_gen = pipeline.get_model("ss_generator")
+    # # Access individual models
+    # ss_gen = pipeline.get_model("ss_generator")
 
-    # Freeze condition embedders, train generators
-    pipeline.freeze(["ss_condition_embedder", "slat_condition_embedder"])
-    pipeline.train()
+    # # Freeze condition embedders, train generators
+    # pipeline.freeze(["ss_condition_embedder", "slat_condition_embedder"])
+    # pipeline.train()
 
-    # dummy forward pass can be added here for testing purposes
-    input = torch.randn(1, 3, 224, 224).to(pipeline.device)
-    ss_condition_embedder = pipeline.get_model("ss_condition_embedder")
-    if ss_condition_embedder is not None:
-        with torch.no_grad():
-            output = ss_condition_embedder(input)
-            logger.info(f"ss_condition_embedder output shape: {output.shape}")
+    # # dummy forward pass can be added here for testing purposes
+    # input = torch.randn(1, 3, 224, 224).to(pipeline.device)
+    # ss_condition_embedder = pipeline.get_model("ss_condition_embedder")
+    # if ss_condition_embedder is not None:
+    #     with torch.no_grad():
+    #         output = ss_condition_embedder(input)
+    #         logger.info(f"ss_condition_embedder output shape: {output.shape}")
     
+        
