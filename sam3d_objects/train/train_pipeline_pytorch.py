@@ -179,15 +179,17 @@ class TrainPipelinePyTorch:
         )
 
         # Build embedder list as expected by EmbedderFuser
+        # Format: (embedder, [(kwarg_name, pos_group), ...])
+        # pos_group is used for positional embeddings - same group shares embeddings
         embedder_list = [
-            (dino_image, [[["image", "cropped"], ["rgb_image", "full"]]]),
-            (dino_mask, [[["mask", "cropped"], ["rgb_image_mask", "full"]]]),
-            (pointmap_embedder, [[["pointmap", "cropped"], ["rgb_pointmap", "full"]]]),
+            (dino_image, [["image", "cropped"], ["rgb_image", "full"]]),
+            (dino_mask, [["mask", "cropped"], ["rgb_image_mask", "full"]]),
+            (pointmap_embedder, [["pointmap", "cropped"], ["rgb_pointmap", "full"]]),
         ]
 
         embedder = EmbedderFuser(
             embedder_list=embedder_list,
-            drop_modalities_weight=[[[["pointmap", "rgb_pointmap"]], 1.0]],
+            drop_modalities_weight=[[["pointmap", "rgb_pointmap"], 1.0]],
             dropout_prob=0.1,
             freeze=True,
             projection_net_hidden_dim_multiplier=4.0,
