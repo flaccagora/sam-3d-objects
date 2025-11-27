@@ -650,11 +650,17 @@ class InferencePipeline:
         ret = {}
         with torch.no_grad():
             if "mesh" in formats:
-                ret["mesh"] = self.models["slat_decoder_mesh"](slat)
+                ret["mesh"] = self._call_model(
+                    "slat_decoder_mesh", self.models["slat_decoder_mesh"], slat
+                )
             if "gaussian" in formats:
-                ret["gaussian"] = self.models["slat_decoder_gs"](slat)
+                ret["gaussian"] = self._call_model(
+                    "slat_decoder_gs", self.models["slat_decoder_gs"], slat
+                )
             if "gaussian_4" in formats:
-                ret["gaussian_4"] = self.models["slat_decoder_gs_4"](slat)
+                ret["gaussian_4"] = self._call_model(
+                    "slat_decoder_gs_4", self.models.get("slat_decoder_gs_4"), slat
+                )
         # if "radiance_field" in formats:
         #     ret["radiance_field"] = self.models["slat_decoder_rf"](slat)
         return ret
@@ -664,8 +670,15 @@ class InferencePipeline:
 
     def embed_condition(self, condition_embedder, *args, **kwargs):
         if condition_embedder is not None:
-            tokens = condition_embedder(*args, **kwargs)
-            logger.info("Condition embedder output tokens shape: {}", tokens.shape)
+            tokens = self._call_model("condition_embedder", condition_embedder, *args, **kwargs)
+            # try to log token shape if tensor-like
+            try:
+                if isinstance(tokens, torch.Tensor):
+                    logger.info("Condition embedder output tokens shape: {}", tokens.shape)
+                elif isinstance(tokens, (list, tuple)) and len(tokens) > 0 and isinstance(tokens[0], torch.Tensor):
+                    logger.info("Condition embedder output tokens shape: {}", tokens[0].shape)
+            except Exception:
+                pass
             return tokens, None, None
         return None, args, kwargs
 
@@ -729,7 +742,9 @@ class InferencePipeline:
                     ss_input_dict,
                     self.ss_condition_input_mapping,
                 )
-                return_dict = ss_generator(
+                return_dict = self._call_model(
+                    "ss_generator",
+                    ss_generator,
                     latent_shape_dict,
                     image.device,
                     *condition_args,
@@ -739,10 +754,12 @@ class InferencePipeline:
                     return_dict = {"shape": return_dict}
 
                 shape_latent = return_dict["shape"]
-                ss = ss_decoder(
+                ss = self._call_model(
+                    "ss_decoder",
+                    ss_decoder,
                     shape_latent.permute(0, 2, 1)
                     .contiguous()
-                    .view(shape_latent.shape[0], 8, 16, 16, 16)
+                    .view(shape_latent.shape[0], 8, 16, 16, 16),
                 )
                 coords = torch.argwhere(ss > 0)[:, [0, 2, 3, 4]].int()
 
@@ -801,8 +818,13 @@ class InferencePipeline:
                     self.slat_condition_input_mapping,
                 )
                 condition_args += (coords.cpu().numpy(),)
-                slat = slat_generator(
-                    latent_shape, DEVICE, *condition_args, **condition_kwargs
+                slat = self._call_model(
+                    "slat_generator",
+                    slat_generator,
+                    latent_shape,
+                    DEVICE,
+                    *condition_args,
+                    **condition_kwargs,
                 )
                 slat = sp.SparseTensor(
                     coords=coords,
@@ -962,3 +984,107 @@ class InferencePipeline:
             dims,
             cfg_keys,
         )
+
+    def _summarize_obj(self, obj):
+        """Return a compact summary (type and shape/length) for tensors, numpy arrays,
+        sparse tensors and common Python containers."""
+        try:
+            import numpy as _np
+        except Exception:
+            _np = None
+
+        try:
+            # torch tensor
+            if isinstance(obj, torch.Tensor):
+                return f"Tensor{tuple(obj.shape)}"
+            # numpy array
+            if _np is not None and isinstance(obj, _np.ndarray):
+                return f"ndarray{obj.shape}"
+            # sparse tensor from sp module
+            try:
+                if hasattr(obj, "coords") and hasattr(obj, "feats"):
+                    c = getattr(obj, "coords")
+                    f = getattr(obj, "feats")
+                    return f"SparseTensor(coords={getattr(c, 'shape', None)}, feats={getattr(f, 'shape', None)})"
+            except Exception:
+                pass
+            # dict
+            if isinstance(obj, dict):
+                return {k: self._summarize_obj(v) for k, v in obj.items()}
+            # list/tuple
+            if isinstance(obj, (list, tuple)):
+                return [self._summarize_obj(v) for v in obj]
+            # fallback to str
+            return str(type(obj))
+        except Exception:
+            return "<error summarizing>"
+
+    def _call_model(self, name, model, *args, **kwargs):
+        """Call a model while logging input and output summaries and performing
+        a simple batch-dimension consistency check.
+
+        - Logs summaries for inputs (shapes/types).
+        - Calls the model and logs summaries for outputs.
+        - If a batch-size can be inferred from inputs, verifies that tensor outputs
+          share that batch size on their first dimension.
+        """
+        try:
+            inp_summary = {}
+            # summarize positional args
+            for i, a in enumerate(args):
+                inp_summary[f"arg{i}"] = self._summarize_obj(a)
+            # summarize kwargs
+            for k, v in kwargs.items():
+                inp_summary[f"kw:{k}"] = self._summarize_obj(v)
+
+            logger.info("Calling model {} with inputs={}", name, inp_summary)
+
+            out = model(*args, **kwargs)
+
+            out_summary = self._summarize_obj(out)
+            logger.info("Model {} returned {}", name, out_summary)
+
+            # simple batch-size consistency check
+            try:
+                batch = None
+                # find batch size from inputs
+                for a in list(args) + list(kwargs.values()):
+                    if isinstance(a, torch.Tensor) and a.dim() >= 1:
+                        batch = a.shape[0]
+                        break
+                    # numpy arrays
+                    try:
+                        import numpy as _np
+
+                        if _np is not None and isinstance(a, _np.ndarray) and a.ndim >= 1:
+                            batch = a.shape[0]
+                            break
+                    except Exception:
+                        pass
+
+                # validate outputs if batch known
+                if batch is not None:
+                    def _check(o):
+                        if isinstance(o, torch.Tensor) and o.dim() >= 1:
+                            if o.shape[0] != batch:
+                                logger.warning(
+                                    "Model {} output tensor first-dim {} != inferred batch {}",
+                                    name,
+                                    o.shape[0],
+                                    batch,
+                                )
+                        elif isinstance(o, dict):
+                            for v in o.values():
+                                _check(v)
+                        elif isinstance(o, (list, tuple)):
+                            for v in o:
+                                _check(v)
+
+                    _check(out)
+            except Exception:
+                logger.exception("Error during batch-size check for {}", name)
+
+            return out
+        except Exception:
+            logger.exception("Error while calling model %s", name)
+            raise
