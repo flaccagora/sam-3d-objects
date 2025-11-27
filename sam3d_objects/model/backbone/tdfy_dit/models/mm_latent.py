@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 import torch
 from torch import nn
+from loguru import logger
 from ..modules.transformer import (
     AbsolutePositionEmbedder,
 )
@@ -28,6 +29,8 @@ class Latent(nn.Module):
             raise NotImplementedError
 
         self.initialize_weights()
+        logger.info(f"Latent initialized: in_channels={in_channels}, model_channels={model_channels}, "
+                   f"pos_emb shape={self.pos_emb.shape}")
 
     def initialize_weights(self) -> None:
         # Initialize transformer layers:

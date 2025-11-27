@@ -701,6 +701,10 @@ class InferencePipeline:
     def sample_sparse_structure(
         self, ss_input_dict: dict, inference_steps=None, use_distillation=False
     ):
+        logger.info("=" * 80)
+        logger.info("SAMPLE_SPARSE_STRUCTURE STARTED")
+        logger.info("=" * 80)
+        
         ss_generator = self.models["ss_generator"]
         ss_decoder = self.models["ss_decoder"]
         if use_distillation:
@@ -718,6 +722,14 @@ class InferencePipeline:
 
         image = ss_input_dict["image"]
         bs = image.shape[0]
+        
+        logger.info("Input ss_input_dict:")
+        for k, v in ss_input_dict.items():
+            if hasattr(v, 'shape'):
+                logger.info(f"  '{k}': shape {v.shape}, dtype {v.dtype}")
+            else:
+                logger.info(f"  '{k}': {type(v)}")
+        
         logger.info(
             "Sampling sparse structure: inference_steps={}, strength={}, interval={}, rescale_t={}, cfg_strength_pm={}",
             ss_generator.inference_steps,
@@ -734,14 +746,25 @@ class InferencePipeline:
                         k: (bs,) + (v.pos_emb.shape[0], v.input_layer.in_features)
                         for k, v in ss_generator.reverse_fn.backbone.latent_mapping.items()
                     }
+                    logger.info("Multi-modal DiT latent_shape_dict:")
+                    for k, v in latent_shape_dict.items():
+                        logger.info(f"  '{k}': {v}")
                 else:
                     latent_shape_dict = (bs,) + (4096, 8)
+                    logger.info(f"Single-modal latent_shape: {latent_shape_dict}")
 
+                logger.info("-" * 40)
+                logger.info("CONDITION EMBEDDING PHASE")
+                logger.info("-" * 40)
                 condition_args, condition_kwargs = self.get_condition_input(
                     self.condition_embedders["ss_condition_embedder"],
                     ss_input_dict,
                     self.ss_condition_input_mapping,
                 )
+                
+                logger.info("-" * 40)
+                logger.info("SS_GENERATOR PHASE (Flow Matching / ODE Solve)")
+                logger.info("-" * 40)
                 return_dict = self._call_model(
                     "ss_generator",
                     ss_generator,
@@ -753,15 +776,31 @@ class InferencePipeline:
                 if not self.is_mm_dit():
                     return_dict = {"shape": return_dict}
 
+                logger.info("ss_generator output (return_dict):")
+                for k, v in return_dict.items():
+                    if hasattr(v, 'shape'):
+                        logger.info(f"  '{k}': shape {v.shape}")
+                    else:
+                        logger.info(f"  '{k}': {type(v)}")
+
+                logger.info("-" * 40)
+                logger.info("SS_DECODER PHASE (Latent -> Occupancy Grid)")
+                logger.info("-" * 40)
                 shape_latent = return_dict["shape"]
+                decoder_input = shape_latent.permute(0, 2, 1).contiguous().view(shape_latent.shape[0], 8, 16, 16, 16)
+                logger.info(f"ss_decoder input shape: {decoder_input.shape}")
+                
                 ss = self._call_model(
                     "ss_decoder",
                     ss_decoder,
-                    shape_latent.permute(0, 2, 1)
-                    .contiguous()
-                    .view(shape_latent.shape[0], 8, 16, 16, 16),
+                    decoder_input,
                 )
+                logger.info(f"ss_decoder output (occupancy) shape: {ss.shape}")
+                logger.info(f"Occupancy stats: min={ss.min().item():.4f}, max={ss.max().item():.4f}, "
+                           f"mean={ss.mean().item():.4f}, num_positive={(ss > 0).sum().item()}")
+                
                 coords = torch.argwhere(ss > 0)[:, [0, 2, 3, 4]].int()
+                logger.info(f"Extracted coords shape: {coords.shape}")
 
                 # downsample output
                 return_dict["coords_original"] = coords
@@ -779,6 +818,10 @@ class InferencePipeline:
                 return_dict["downsample_factor"] = downsample_factor
 
         ss_generator.inference_steps = prev_inference_steps
+        
+        logger.info("=" * 80)
+        logger.info("SAMPLE_SPARSE_STRUCTURE COMPLETED")
+        logger.info("=" * 80)
         return return_dict
 
     def sample_slat(
@@ -862,6 +905,9 @@ class InferencePipeline:
     def preprocess_image(
         self, image: Union[Image.Image, np.ndarray], preprocessor
     ) -> torch.Tensor:
+        logger.info("-" * 40)
+        logger.info("preprocess_image called")
+        
         # canonical type is numpy
         if not isinstance(input, np.ndarray):
             image = np.array(image)
@@ -869,14 +915,22 @@ class InferencePipeline:
         assert image.ndim == 3  # no batch dimension as of now
         assert image.shape[-1] == 4  # rgba format
         assert image.dtype == np.uint8  # [0,255] range
+        
+        logger.info(f"Input image: shape {image.shape}, dtype {image.dtype}")
 
         rgba_image = torch.from_numpy(self.image_to_float(image))
         rgba_image = rgba_image.permute(2, 0, 1).contiguous()
+        logger.info(f"After to_float and permute: {rgba_image.shape}")
+        
         rgb_image = rgba_image[:3]
         rgb_image_mask = (get_mask(rgba_image, None, "ALPHA_CHANNEL") > 0).float()
+        logger.info(f"rgb_image shape: {rgb_image.shape}")
+        logger.info(f"rgb_image_mask shape: {rgb_image_mask.shape}")
+        
         processed_rgb_image, processed_mask = self._preprocess_image_and_mask(
             rgb_image, rgb_image_mask, preprocessor.img_mask_joint_transform
         )
+        logger.info(f"After img_mask_joint_transform: rgb {processed_rgb_image.shape}, mask {processed_mask.shape}")
 
         # transform tensor to model input
         processed_rgb_image = self._apply_transform(
@@ -885,6 +939,7 @@ class InferencePipeline:
         processed_mask = self._apply_transform(
             processed_mask, preprocessor.mask_transform
         )
+        logger.info(f"After individual transforms: rgb {processed_rgb_image.shape}, mask {processed_mask.shape}")
 
         # full image, with only processing from the image
         rgb_image = self._apply_transform(rgb_image, preprocessor.img_transform)
@@ -897,6 +952,11 @@ class InferencePipeline:
             "rgb_image": rgb_image[None].to(self.device),
             "rgb_image_mask": rgb_image_mask[None].to(self.device),
         }
+        
+        logger.info("Preprocessed output dict:")
+        for k, v in item.items():
+            logger.info(f"  '{k}': shape {v.shape}, dtype {v.dtype}")
+        logger.info("-" * 40)
 
         return item
 

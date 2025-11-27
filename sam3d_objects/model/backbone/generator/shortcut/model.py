@@ -6,6 +6,7 @@ import numpy as np
 from functools import partial
 import optree
 import math
+from loguru import logger
 
 from sam3d_objects.model.backbone.generator.base import Base
 from sam3d_objects.data.utils import right_broadcasting
@@ -419,9 +420,33 @@ class ShortCut(FlowMatching):
         **kwargs_conditionals,
     ):
         """Generate samples using shortcut model"""
+        logger.info("=" * 60)
+        logger.info("ShortCut.generate_iter started")
+        logger.info(f"no_shortcut: {self.no_shortcut}")
+        logger.info(f"inference_steps: {self.inference_steps}")
+        logger.info(f"rescale_t: {self.rescale_t}")
+        
+        if isinstance(x_shape, dict):
+            logger.info(f"x_shape (dict):")
+            for k, v in x_shape.items():
+                logger.info(f"  '{k}': {v}")
+        else:
+            logger.info(f"x_shape: {x_shape}")
+        
         x_0 = self._generate_noise(x_shape, x_device)
+        
+        if isinstance(x_0, dict):
+            logger.info(f"Initial noise x_0 (dict):")
+            for k, v in x_0.items():
+                logger.info(f"  '{k}': shape {v.shape}")
+        else:
+            logger.info(f"Initial noise x_0 shape: {x_0.shape if hasattr(x_0, 'shape') else type(x_0)}")
+        
         t_seq, d = self._prepare_t_and_d()
+        logger.info(f"Time sequence t_seq: [{t_seq[0]:.4f}, ..., {t_seq[-1]:.4f}] (len={len(t_seq)})")
+        logger.info(f"Step size d: {d}")
 
+        step_count = 0
         for x_t, t in self._solver.solve_iter(
             self._generate_dynamics,
             x_0,
@@ -430,7 +455,18 @@ class ShortCut(FlowMatching):
             *args_conditionals,
             **kwargs_conditionals,
         ):
+            if step_count == 0 or step_count == self.inference_steps - 1:
+                logger.info(f"ODE step [{step_count}], t={t:.4f}, d={d}")
+                if isinstance(x_t, dict):
+                    for k, v in x_t.items():
+                        logger.info(f"  x_t['{k}']: shape {v.shape}, mean={v.mean().item():.4f}, std={v.std().item():.4f}")
+                else:
+                    logger.info(f"  x_t shape: {x_t.shape}, mean={x_t.mean().item():.4f}, std={x_t.std().item():.4f}")
+            step_count += 1
             yield t, x_t, ()
+        
+        logger.info(f"ShortCut.generate_iter completed after {step_count} steps")
+        logger.info("=" * 60)
 
     def _generate_dynamics(
         self,

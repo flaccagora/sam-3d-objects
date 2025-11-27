@@ -201,18 +201,32 @@ class EmbedderFuser(torch.nn.Module):
         return result_tokens
 
     def forward(self, *args, **kwargs):
+        logger.info("=" * 60)
+        logger.info("EmbedderFuser forward pass started")
+        logger.info(f"Number of embedders: {len(self.embedder_list)}")
+        logger.info(f"Available kwargs: {list(kwargs.keys())}")
+        
         tokens = []
         kwarg_names = []
         
         for i, (condition_embedder, kwargs_info) in enumerate(self.embedder_list):
+            embedder_name = condition_embedder.__class__.__name__
+            logger.info(f"Processing embedder [{i}]: {embedder_name}")
+            
             # Ideally, we would batch the inputs; but that assumes same-sized inputs
             for kwarg_name, pos_group in kwargs_info:
                 if kwarg_name not in kwargs:
                     logger.warning(f"{kwarg_name} not in kwargs to condition embedder!")
                 input_cond = kwargs[kwarg_name]
+                logger.info(f"  Input '{kwarg_name}' shape: {input_cond.shape if hasattr(input_cond, 'shape') else type(input_cond)}")
+                
                 cond_token = condition_embedder(input_cond)
+                logger.info(f"  After {embedder_name} output shape: {cond_token.shape}")
+                
                 if self.projection_net_hidden_dim_multiplier > 0:
                     cond_token = self.projection_nets[i](cond_token)
+                    logger.info(f"  After projection net output shape: {cond_token.shape}")
+                    
                 if pos_group is not None:
                     pos_idx = self.positional_embed_map[pos_group]
                     if self.use_pos_embedding == "random":
@@ -223,16 +237,26 @@ class EmbedderFuser(torch.nn.Module):
                         raise NotImplementedError(
                             f"Unknown pos embedding {self.use_pos_embedding}"
                         )
+                    logger.info(f"  Added positional embedding (group: {pos_group}, idx: {pos_idx})")
+                    
                 tokens.append(cond_token)
                 kwarg_names.append(kwarg_name)
 
         # Apply dropout modalities with preserved order
         tokens = self._dropout_modalities(kwarg_names, tokens)
 
+        logger.info(f"Total tokens before concatenation: {len(tokens)}")
+        for i, (name, tok) in enumerate(zip(kwarg_names, tokens)):
+            logger.info(f"  Token [{i}] '{name}': shape {tok.shape}")
+
         if self.compression_projection_multiplier > 0:
             tokens = torch.cat(tokens, dim=-1)
             tokens = self.compression_projector(tokens)
+            logger.info(f"After compression projection: {tokens.shape}")
         else:
             tokens = torch.cat(tokens, dim=1)
+            logger.info(f"After concatenation (dim=1): {tokens.shape}")
 
+        logger.info("EmbedderFuser forward pass completed")
+        logger.info("=" * 60)
         return tokens

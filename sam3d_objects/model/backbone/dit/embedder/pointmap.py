@@ -233,6 +233,16 @@ class PointPatchEmbed(nn.Module):
 
         returns: (B, num_windows, D)
         """
+        logger.info("PointPatchEmbed forward called")
+        logger.info(f"Input xyz shape: {xyz.shape}")
+        if valid_mask is not None:
+            logger.info(f"Input valid_mask shape: {valid_mask.shape}")
+        
         # Get window embeddings
         x, B, H, W = self.embed_pointmap_windows(xyz, valid_mask)
-        return self.inner_forward(x, B, H, W)
+        logger.info(f"After embed_pointmap_windows: x shape {x.shape}, B={B}, H={H}, W={W}")
+        
+        output = self.inner_forward(x, B, H, W)
+        logger.info(f"Output shape: {output.shape}")
+        logger.info("PointPatchEmbed forward completed")
+        return output

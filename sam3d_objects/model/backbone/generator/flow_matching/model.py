@@ -5,6 +5,7 @@ import numpy as np
 from functools import partial
 import optree
 import math
+from loguru import logger
 
 from sam3d_objects.model.backbone.generator.base import Base
 from sam3d_objects.data.utils import right_broadcasting
@@ -206,9 +207,27 @@ class FlowMatching(Base):
         *args_conditionals,
         **kwargs_conditionals,
     ):
+        logger.info("=" * 60)
+        logger.info("FlowMatching.generate_iter started")
+        logger.info(f"x_shape: {x_shape}")
+        logger.info(f"x_device: {x_device}")
+        logger.info(f"inference_steps: {self.inference_steps}")
+        logger.info(f"rescale_t: {self.rescale_t}")
+        logger.info(f"solver: {self._solver_method}")
+        
         x_0 = self._generate_noise(x_shape, x_device)
+        
+        if isinstance(x_0, dict):
+            logger.info(f"Initial noise x_0 (dict):")
+            for k, v in x_0.items():
+                logger.info(f"  '{k}': shape {v.shape}")
+        else:
+            logger.info(f"Initial noise x_0 shape: {x_0.shape if hasattr(x_0, 'shape') else type(x_0)}")
+        
         t_seq = self._prepare_t().to(x_device)
+        logger.info(f"Time sequence: {t_seq[:5].tolist()}...{t_seq[-3:].tolist()} (len={len(t_seq)})")
 
+        step_count = 0
         for x_t, t in self._solver.solve_iter(
             self._generate_dynamics,
             x_0,
@@ -216,7 +235,18 @@ class FlowMatching(Base):
             *args_conditionals,
             **kwargs_conditionals,
         ):
+            if step_count == 0 or step_count == self.inference_steps - 1:
+                logger.info(f"ODE step [{step_count}], t={t:.4f}")
+                if isinstance(x_t, dict):
+                    for k, v in x_t.items():
+                        logger.info(f"  x_t['{k}']: shape {v.shape}, mean={v.mean().item():.4f}, std={v.std().item():.4f}")
+                else:
+                    logger.info(f"  x_t shape: {x_t.shape}, mean={x_t.mean().item():.4f}, std={x_t.std().item():.4f}")
+            step_count += 1
             yield t, x_t, ()
+        
+        logger.info(f"FlowMatching.generate_iter completed after {step_count} steps")
+        logger.info("=" * 60)
 
     def _generate_dynamics(
         self,

@@ -308,19 +308,32 @@ class SparseStructureDecoder(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        logger.info("=" * 60)
+        logger.info("SparseStructureDecoder forward pass started")
+        logger.info(f"Input shape: {x.shape}, dtype: {x.dtype}")
+        
         if self.reshape_input_to_cube:
             x = self.flat_to_cube(x)
+            logger.info(f"After flat_to_cube: {x.shape}")
 
         h = self.input_layer(x)
+        logger.info(f"After input_layer: {h.shape}")
 
         h = h.type(self.dtype)
 
         h = self.middle_block(h)
-        for block in self.blocks:
+        logger.info(f"After middle_block: {h.shape}")
+        
+        for i, block in enumerate(self.blocks):
             h = block(h)
+            if i % 3 == 0 or i == len(self.blocks) - 1:  # Log periodically
+                logger.info(f"After block [{i}] ({block.__class__.__name__}): {h.shape}")
 
         h = h.type(x.dtype)
         h = self.out_layer(h)
+        logger.info(f"After out_layer (final): {h.shape}")
+        logger.info("SparseStructureDecoder forward pass completed")
+        logger.info("=" * 60)
         return h
 
     @staticmethod

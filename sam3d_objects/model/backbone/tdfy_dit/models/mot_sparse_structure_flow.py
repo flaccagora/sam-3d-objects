@@ -4,6 +4,7 @@ from typing import *
 from torch.utils import _pytree
 import torch
 import torch.nn as nn
+from loguru import logger
 from ..modules.utils import convert_module_to_f16, convert_module_to_f32
 from collections import namedtuple
 from ..modules.utils import FP16_TYPE
@@ -144,12 +145,27 @@ class SparseStructureFlowModel(nn.Module):
         cond: torch.Tensor,
         d: torch.Tensor = None,
     ) -> torch.Tensor:
+        logger.info("=" * 60)
+        logger.info("SparseStructureFlowModel forward pass started")
+        logger.info(f"Input h (latent dict):")
+        for k, v in h.items():
+            logger.info(f"  '{k}': shape {v.shape}, dtype {v.dtype}")
+        logger.info(f"Timestep t: {t.item() if t.numel() == 1 else t.shape}")
+        logger.info(f"Condition cond shape: {cond.shape}")
+        if d is not None:
+            logger.info(f"Shortcut d: {d.item() if d.numel() == 1 else d.shape}")
+        
         t_emb = self.t_embedder(t)
+        logger.info(f"After TimestepEmbedder: t_emb shape {t_emb.shape}")
+        
         if d is not None:
             d_emb = self.d_embedder(d)
             t_emb = t_emb + d_emb
+            logger.info(f"After adding d_emb: t_emb shape {t_emb.shape}")
+            
         if self.share_mod:
             t_emb = self.adaLN_modulation(t_emb)
+            logger.info(f"After shared adaLN modulation: t_emb shape {t_emb.shape}")
 
         input_dtype = tree_reduce_unique(lambda tensor: tensor.dtype, h)
         t_emb = t_emb.type(self.dtype)
@@ -159,14 +175,21 @@ class SparseStructureFlowModel(nn.Module):
         )
         cond = cond.type(self.dtype)
 
-        for block in self.blocks:
+        logger.info(f"Processing through {len(self.blocks)} transformer blocks...")
+        for block_idx, block in enumerate(self.blocks):
             h = block(h, t_emb, cond)
+            if block_idx == 0 or block_idx == len(self.blocks) - 1:
+                logger.info(f"  Block [{block_idx}] output shapes:")
+                for k, v in h.items():
+                    logger.info(f"    '{k}': {v.shape}")
 
         h = _pytree.tree_map(
             partial(self._cast_type, dtype=input_dtype),
             h,
         )
 
+        logger.info("SparseStructureFlowModel forward pass completed")
+        logger.info("=" * 60)
         return h
 
 
@@ -209,22 +232,46 @@ class SparseStructureFlowTdfyWrapper(SparseStructureFlowModel):
         *condition_args,
         **condition_kwargs,
     ) -> dict:
+        logger.info("=" * 60)
+        logger.info("SparseStructureFlowTdfyWrapper forward pass started")
+        logger.info(f"Input latents_dict:")
+        for k, v in latents_dict.items():
+            logger.info(f"  '{k}': shape {v.shape}, dtype {v.dtype}")
+        logger.info(f"Timestep t: {t.item() if t.numel() == 1 else t.shape}")
+        
         d = condition_kwargs.pop("d", None)
+        if d is not None:
+            logger.info(f"Shortcut step d: {d.item() if d.numel() == 1 else d.shape}")
             
         cfg_activate = condition_kwargs.pop("cfg", False)
+        logger.info(f"CFG activate: {cfg_activate}")
+        
         if self.force_zeros_cond and cfg_activate:
             cond = self.condition_embedder(*condition_args, **condition_kwargs)
             cond = cond * 0
+            logger.info(f"CFG mode: zeroed condition, shape {cond.shape}")
         else:
             cond = self.condition_embedder(*condition_args, **condition_kwargs)
+            logger.info(f"Condition embedding shape: {cond.shape}")
 
         # concatenate input
+        logger.info("Projecting input latents to model hidden dimension...")
         latent_dict = self.project_input(latents_dict)
+        logger.info(f"After project_input:")
+        for k, v in latent_dict.items():
+            logger.info(f"  '{k}': shape {v.shape}")
+        
         output = super().forward(latent_dict, t, cond, d)
 
         # split input to multiple output modalities
+        logger.info("Projecting output back to latent dimensions...")
         output_latents = self.project_output(output)
-
+        logger.info(f"Final output_latents:")
+        for k, v in output_latents.items():
+            logger.info(f"  '{k}': shape {v.shape}")
+        
+        logger.info("SparseStructureFlowTdfyWrapper forward pass completed")
+        logger.info("=" * 60)
         return output_latents
 
     def project_input(
@@ -232,6 +279,7 @@ class SparseStructureFlowTdfyWrapper(SparseStructureFlowModel):
         latents_dict: Dict,
     ) -> Dict:
         # concatenate input from multiple modalities
+        logger.info("  project_input: mapping latents to model channels")
         latent_dict = {}
         for latent_name in self.input_latent_mappings:
             assert (
@@ -240,16 +288,26 @@ class SparseStructureFlowTdfyWrapper(SparseStructureFlowModel):
             latent_input = latents_dict[latent_name]
             x = self.latent_mapping[latent_name].to_input(latent_input)
             latent_dict[latent_name] = x
+            logger.info(f"    '{latent_name}': {latent_input.shape} -> {x.shape}")
 
         latent_dict = self.merge_latent_share_transformer(latent_dict)
+        logger.info("  After merging shared transformer groups:")
+        for k, v in latent_dict.items():
+            logger.info(f"    '{k}': {v.shape}")
         return latent_dict
 
     def project_output(self, output: Dict) -> Dict:
+        logger.info("  project_output: mapping model channels back to latent dims")
         output = self.split_latent_share_transformer(output)
+        logger.info("  After splitting shared transformer groups:")
+        for k, v in output.items():
+            logger.info(f"    '{k}': {v.shape}")
+            
         output_latents = {}
         for latent_name in self.input_latent_mappings:
             latent = self.latent_mapping[latent_name].to_output(output[latent_name])
             output_latents[latent_name] = latent
+            logger.info(f"    '{latent_name}': {output[latent_name].shape} -> {latent.shape}")
 
         return output_latents
 

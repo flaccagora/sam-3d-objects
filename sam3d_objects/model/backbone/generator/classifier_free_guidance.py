@@ -106,16 +106,46 @@ class ClassifierFreeGuidance(torch.nn.Module):
             return _pytree.tree_map(partial(self._cfg_step_tensor, strength=strength), y_cond, y_uncond)
 
     def inner_forward(self, x, t, is_cond, strength, *args_cond, **kwargs_cond):
+        logger.info("ClassifierFreeGuidance.inner_forward called")
+        logger.info(f"  is_cond: {is_cond}, strength: {strength}")
+        if isinstance(x, dict):
+            logger.info(f"  Input x (dict):")
+            for k, v in x.items():
+                logger.info(f"    '{k}': shape {v.shape}")
+        else:
+            logger.info(f"  Input x shape: {x.shape if hasattr(x, 'shape') else type(x)}")
+        logger.info(f"  Timestep t: {t.item() if hasattr(t, 'item') and t.numel() == 1 else t}")
+        
         y_cond = self.backbone(x, t, *args_cond, **kwargs_cond)
+        
+        if isinstance(y_cond, dict):
+            logger.info(f"  Conditional output y_cond:")
+            for k, v in y_cond.items():
+                logger.info(f"    '{k}': shape {v.shape}")
+        else:
+            logger.info(f"  Conditional output y_cond shape: {y_cond.shape if hasattr(y_cond, 'shape') else type(y_cond)}")
+        
         if is_cond:
+            logger.info("  Returning conditional output (no CFG applied)")
             return y_cond
         else:
+            logger.info("  Computing unconditional output for CFG...")
             args_cond, kwargs_cond = self._make_unconditional_args(
                 args_cond,
                 kwargs_cond,
             )
             y_uncond = self.backbone(x, t, *args_cond, **kwargs_cond)
-            return self._cfg_step(y_cond, y_uncond, strength)
+            
+            if isinstance(y_uncond, dict):
+                logger.info(f"  Unconditional output y_uncond:")
+                for k, v in y_uncond.items():
+                    logger.info(f"    '{k}': shape {v.shape}")
+            else:
+                logger.info(f"  Unconditional output y_uncond shape: {y_uncond.shape if hasattr(y_uncond, 'shape') else type(y_uncond)}")
+            
+            result = self._cfg_step(y_cond, y_uncond, strength)
+            logger.info(f"  CFG applied with strength={strength}")
+            return result
 
     def forward(self, x, t, *args_cond, **kwargs_cond):
         # handle case when no conditional arguments are provided
