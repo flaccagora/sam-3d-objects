@@ -20,7 +20,7 @@ mask = load_single_mask("notebook/images/shutterstock_stylish_kidsroom_164080656
 output = inference(image, mask, seed=42)
 
 # export gaussian splat
-output["gs"].save_ply(f"splat.ply")
+# output["gs"].save_ply(f"splat.ply")
 print("Your reconstruction has been saved to splat.ply")
 
 
