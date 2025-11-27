@@ -358,7 +358,7 @@ class Trainer:
         total_loss = torch.tensor(0.0, device=self.device)
         
         # Forward pass with AMP
-        with autocast(device_type="cuda", enabled=self.config.use_amp):
+        with autocast(dtype=self.amp_dtype, enabled=self.config.use_amp):
             # Get condition embedding
             ss_condition_embedder = self.pipeline.condition_embedders.get("ss_condition_embedder")
             slat_condition_embedder = self.pipeline.condition_embedders.get("slat_condition_embedder")
