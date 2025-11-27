@@ -14,7 +14,7 @@ image = load_image("notebook/images/shutterstock_stylish_kidsroom_1640806567/ima
 mask = load_single_mask("notebook/images/shutterstock_stylish_kidsroom_1640806567", index=14)
 
 # run model
-output = inference(image, mask, seed=42, stage1_only=True)
+output = inference(image, mask, seed=42)
 
 # export gaussian splat
 output["gs"].save_ply(f"splat.ply")
