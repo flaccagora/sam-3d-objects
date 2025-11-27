@@ -310,12 +310,20 @@ class InferencePipeline:
             "_base_models.generator."
         )
 
-        return self.instantiate_and_load_from_pretrained(
+        model = self.instantiate_and_load_from_pretrained(
             config,
             os.path.join(self.workspace_dir, ss_generator_ckpt_path),
             state_dict_fn=state_dict_prefix_func,
             device=self.device,
         )
+
+        # Log model input/output related info
+        try:
+            self._log_model_io("ss_generator", model, config)
+        except Exception:
+            logger.exception("Failed to log ss_generator IO info")
+
+        return model
 
     def init_slat_generator(self, slat_generator_config_path, slat_generator_ckpt_path):
         config = OmegaConf.load(
@@ -324,12 +332,21 @@ class InferencePipeline:
         state_dict_prefix_func = filter_and_remove_prefix_state_dict_fn(
             "_base_models.generator."
         )
-        return self.instantiate_and_load_from_pretrained(
+
+        model = self.instantiate_and_load_from_pretrained(
             config,
             os.path.join(self.workspace_dir, slat_generator_ckpt_path),
             state_dict_fn=state_dict_prefix_func,
             device=self.device,
         )
+
+        # Log model input/output related info
+        try:
+            self._log_model_io("slat_generator", model, config)
+        except Exception:
+            logger.exception("Failed to log slat_generator IO info")
+
+        return model
 
     def init_ss_encoder(self, ss_encoder_config_path, ss_encoder_ckpt_path):
         if ss_encoder_ckpt_path is not None:
@@ -339,12 +356,17 @@ class InferencePipeline:
             )
             if "pretrained_ckpt_path" in config:
                 del config["pretrained_ckpt_path"]
-            return self.instantiate_and_load_from_pretrained(
+            model = self.instantiate_and_load_from_pretrained(
                 config,
                 os.path.join(self.workspace_dir, ss_encoder_ckpt_path),
                 device=self.device,
                 state_dict_key=None,
             )
+            try:
+                self._log_model_io("ss_encoder", model, config)
+            except Exception:
+                logger.exception("Failed to log ss_encoder IO info")
+            return model
         else:
             return None
 
@@ -355,12 +377,17 @@ class InferencePipeline:
         )
         if "pretrained_ckpt_path" in config:
             del config["pretrained_ckpt_path"]
-        return self.instantiate_and_load_from_pretrained(
+        model = self.instantiate_and_load_from_pretrained(
             config,
             os.path.join(self.workspace_dir, ss_decoder_ckpt_path),
             device=self.device,
             state_dict_key=None,
         )
+        try:
+            self._log_model_io("ss_decoder", model, config)
+        except Exception:
+            logger.exception("Failed to log ss_decoder IO info")
+        return model
 
     def init_slat_decoder_gs(
         self, slat_decoder_gs_config_path, slat_decoder_gs_ckpt_path
@@ -368,26 +395,38 @@ class InferencePipeline:
         if slat_decoder_gs_config_path is None:
             return None
         else:
-            return self.instantiate_and_load_from_pretrained(
-                OmegaConf.load(
-                    os.path.join(self.workspace_dir, slat_decoder_gs_config_path)
-                ),
+            config = OmegaConf.load(
+                os.path.join(self.workspace_dir, slat_decoder_gs_config_path)
+            )
+            model = self.instantiate_and_load_from_pretrained(
+                config,
                 os.path.join(self.workspace_dir, slat_decoder_gs_ckpt_path),
                 device=self.device,
                 state_dict_key=None,
             )
+            try:
+                self._log_model_io("slat_decoder_gs", model, config)
+            except Exception:
+                logger.exception("Failed to log slat_decoder_gs IO info")
+            return model
 
     def init_slat_decoder_mesh(
         self, slat_decoder_mesh_config_path, slat_decoder_mesh_ckpt_path
     ):
-        return self.instantiate_and_load_from_pretrained(
-            OmegaConf.load(
-                os.path.join(self.workspace_dir, slat_decoder_mesh_config_path)
-            ),
+        config = OmegaConf.load(
+            os.path.join(self.workspace_dir, slat_decoder_mesh_config_path)
+        )
+        model = self.instantiate_and_load_from_pretrained(
+            config,
             os.path.join(self.workspace_dir, slat_decoder_mesh_ckpt_path),
             device=self.device,
             state_dict_key=None,
         )
+        try:
+            self._log_model_io("slat_decoder_mesh", model, config)
+        except Exception:
+            logger.exception("Failed to log slat_decoder_mesh IO info")
+        return model
 
     def init_ss_condition_embedder(
         self, ss_generator_config_path, ss_generator_ckpt_path
@@ -396,14 +435,20 @@ class InferencePipeline:
             os.path.join(self.workspace_dir, ss_generator_config_path)
         )
         if "condition_embedder" in conf["module"]:
-            return self.instantiate_and_load_from_pretrained(
-                conf["module"]["condition_embedder"]["backbone"],
+            config = conf["module"]["condition_embedder"]["backbone"]
+            model = self.instantiate_and_load_from_pretrained(
+                config,
                 os.path.join(self.workspace_dir, ss_generator_ckpt_path),
                 state_dict_fn=filter_and_remove_prefix_state_dict_fn(
                     "_base_models.condition_embedder."
                 ),
                 device=self.device,
             )
+            try:
+                self._log_model_io("ss_condition_embedder", model, config)
+            except Exception:
+                logger.exception("Failed to log ss_condition_embedder IO info")
+            return model
         else:
             return None
 
@@ -843,3 +888,77 @@ class InferencePipeline:
             return torch.float32
         else:
             raise NotImplementedError
+
+    def _log_model_io(self, name, model, config=None):
+        """Collect and log basic model IO-related info: parameter count, common attribute dims,
+        and any latent mapping shapes if present in the model/backbone.
+
+        This is a best-effort helper — it inspects common attributes and the provided config
+        to produce useful logging for debugging. It must not raise on inspection failures.
+        """
+        try:
+            params = sum(p.numel() for p in model.parameters())
+        except Exception:
+            params = None
+
+        dims = {}
+        # common attribute names that may indicate input/output dims
+        try:
+            candidates = [
+                "in_features",
+                "out_features",
+                "input_dim",
+                "output_dim",
+                "latent_dim",
+                "num_features",
+                "embedding_dim",
+            ]
+            for attr in candidates:
+                if hasattr(model, attr):
+                    dims[attr] = getattr(model, attr)
+
+            # mm-dit style backbone latent mapping
+            if hasattr(model, "reverse_fn") and hasattr(model.reverse_fn, "backbone"):
+                backbone = model.reverse_fn.backbone
+                if hasattr(backbone, "latent_mapping"):
+                    for k, v in backbone.latent_mapping.items():
+                        try:
+                            if hasattr(v, "pos_emb"):
+                                dims[f"latent_mapping.{k}.pos_emb_shape"] = tuple(v.pos_emb.shape)
+                        except Exception:
+                            dims[f"latent_mapping.{k}.pos_emb_shape"] = "<error>"
+                        try:
+                            if hasattr(v, "input_layer") and hasattr(v.input_layer, "in_features"):
+                                dims[f"latent_mapping.{k}.in_features"] = v.input_layer.in_features
+                        except Exception:
+                            dims[f"latent_mapping.{k}.in_features"] = "<error>"
+
+            # Also look for encoder/decoder-specific accessible attributes
+            if hasattr(model, "input_shape"):
+                dims["input_shape"] = getattr(model, "input_shape")
+            if hasattr(model, "output_shape"):
+                dims["output_shape"] = getattr(model, "output_shape")
+        except Exception:
+            logger.exception("Error while extracting dims for %s", name)
+
+        # config keys may carry hints about shapes
+        cfg_keys = None
+        try:
+            if config is not None:
+                if isinstance(config, dict):
+                    cfg_keys = list(config.keys())
+                else:
+                    try:
+                        cfg_keys = list(config.keys())
+                    except Exception:
+                        cfg_keys = str(config)
+        except Exception:
+            cfg_keys = "<error>"
+
+        logger.info(
+            "Initialized model {}: params={}, dims={}, config_keys={}",
+            name,
+            params,
+            dims,
+            cfg_keys,
+        )
