@@ -220,8 +220,8 @@ class TrainPipelinePyTorch:
         )
 
         embedder_list = [
-            (dino_image, [[["image", "cropped"], ["rgb_image", "full"]]]),
-            (dino_mask, [[["mask", "cropped"], ["rgb_image_mask", "full"]]]),
+            (dino_image, [["image", "cropped"], ["rgb_image", "full"]]),
+            (dino_mask, [["mask", "cropped"], ["rgb_image_mask", "full"]]),
         ]
 
         embedder = EmbedderFuser(
